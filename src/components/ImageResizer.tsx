@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FaCog, FaSun } from 'react-icons/fa'; // Asegúrate de instalar react-icons
+import { FaCog, FaSun, FaSync } from 'react-icons/fa';
 
 const MAX_WIDTH = 1024;
 
@@ -14,7 +14,9 @@ const ImageResizer: React.FC = () => {
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [quality, setQuality] = useState<number>(1);
   const [showQualityDropdown, setShowQualityDropdown] = useState(false);
+  const qualityDropdownRef = useRef<HTMLDivElement>(null);
   const [brightness, setBrightness] = useState<number>(100);
+  const [rotation, setRotation] = useState<number>(0);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -37,6 +39,24 @@ const ImageResizer: React.FC = () => {
   };
 
   useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (qualityDropdownRef.current && !qualityDropdownRef.current.contains(event.target as Node)) {
+        setShowQualityDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const toggleQualityDropdown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowQualityDropdown(!showQualityDropdown);
+  };
+
+  useEffect(() => {
     if (image && canvasRef.current && overlayCanvasRef.current) {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
@@ -50,17 +70,30 @@ const ImageResizer: React.FC = () => {
       overlayCanvas.width = canvas.width;
       overlayCanvas.height = canvas.height;
       
-      // Apply brightness adjustment
-      ctx!.filter = `brightness(${brightness}%)`;
-      ctx?.drawImage(image, 0, 0, canvas.width, canvas.height);
-      ctx!.filter = 'none';
+      if (ctx) {
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.translate(-canvas.width / 2, -canvas.height / 2);
+        
+        // Apply brightness adjustment
+        ctx.filter = `brightness(${brightness}%)`;
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        ctx.filter = 'none';
+        
+        ctx.restore();
+      }
 
       drawOverlay(overlayCtx);
     }
-  }, [image, crop, brightness]);
+  }, [image, crop, brightness, rotation]);
 
   const handleBrightnessChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setBrightness(Number(e.target.value));
+  };
+
+  const handleRotationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setRotation(Number(e.target.value));
   };
 
   const drawOverlay = (ctx: CanvasRenderingContext2D | null) => {
@@ -172,49 +205,31 @@ const ImageResizer: React.FC = () => {
 
   const handleDownload = () => {
     if (canvasRef.current && image) {
-      const canvas = canvasRef.current;
-      
-      // Create a new canvas for the cropped image
-      const croppedCanvas = document.createElement('canvas');
-      croppedCanvas.width = crop.width * quality;
-      croppedCanvas.height = crop.height * quality;
-      const ctx = croppedCanvas.getContext('2d');
+      const sourceCanvas = canvasRef.current;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
       
       if (ctx) {
-        // Enable image smoothing
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
+        canvas.width = crop.width * quality;
+        canvas.height = crop.height * quality;
         
-        // Calculate the source rectangle (in the original image)
-        const scaleFactor = Math.min(MAX_WIDTH / image.width, 1);
-        const sourceX = crop.x / scaleFactor;
-        const sourceY = crop.y / scaleFactor;
-        const sourceWidth = crop.width / scaleFactor;
-        const sourceHeight = crop.height / scaleFactor;
-        
-        // Apply brightness filter
-        ctx.filter = `brightness(${brightness}%)`;
-        
-        // Draw the cropped portion of the image
+        // Draw the cropped portion of the source canvas
         ctx.drawImage(
-          image,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
+          sourceCanvas,
+          crop.x,
+          crop.y,
+          crop.width,
+          crop.height,
           0,
           0,
-          crop.width * quality,
-          crop.height * quality
+          canvas.width,
+          canvas.height
         );
-        
-        // Reset filter
-        ctx.filter = 'none';
         
         // Create download link
         const link = document.createElement('a');
         link.download = `cropped-image-${quality}x.png`;
-        link.href = croppedCanvas.toDataURL('image/png');
+        link.href = canvas.toDataURL('image/png');
         link.click();
       }
     }
@@ -229,8 +244,8 @@ const ImageResizer: React.FC = () => {
         className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
       />
       {image && (
-        <div className="space-y-2">
-          <div className="max-w-full overflow-auto relative">
+        <div className="space-y-4">
+          <div className="max-w-full overflow-hidden relative inline-block">
             <canvas
               ref={canvasRef}
               className="border"
@@ -243,38 +258,29 @@ const ImageResizer: React.FC = () => {
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
             />
-            <div className="absolute top-2 left-2 bg-white bg-opacity-80 rounded-md shadow-md">
+            <div className="absolute top-2 left-2 bg-white bg-opacity-80 rounded-md shadow-md z-10" ref={qualityDropdownRef}>
               <button
                 className="p-2 hover:bg-gray-200 rounded-md"
-                onClick={() => setShowQualityDropdown(!showQualityDropdown)}
+                onClick={toggleQualityDropdown}
                 title="Image Quality"
               >
                 <FaCog />
               </button>
               {showQualityDropdown && (
-                <div className="absolute left-full ml-2 bg-white rounded-md shadow-md">
-                  <button
-                    className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${quality === 1 ? 'bg-blue-100' : ''}`}
-                    onClick={() => handleQualityChange(1)}
-                  >
-                    1x
-                  </button>
-                  <button
-                    className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${quality === 2 ? 'bg-blue-100' : ''}`}
-                    onClick={() => handleQualityChange(2)}
-                  >
-                    2x
-                  </button>
-                  <button
-                    className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${quality === 3 ? 'bg-blue-100' : ''}`}
-                    onClick={() => handleQualityChange(3)}
-                  >
-                    3x
-                  </button>
+                <div className="absolute top-full left-0 mt-1 bg-white rounded-md shadow-md z-20 overflow-hidden">
+                  {[1, 2, 3].map((q) => (
+                    <button
+                      key={q}
+                      className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${quality === q ? 'bg-blue-100' : ''}`}
+                      onClick={() => handleQualityChange(q)}
+                    >
+                      {q}x
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
-            <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-white bg-opacity-80 rounded-md shadow-md p-2 flex items-center">
+            <div className="absolute top-2 left-0 right-0 mx-auto w-fit bg-white bg-opacity-80 rounded-md shadow-md p-2 flex items-center z-10">
               <FaSun className="mr-2 text-yellow-500" />
               <input
                 type="range"
@@ -282,16 +288,29 @@ const ImageResizer: React.FC = () => {
                 max="200"
                 value={brightness}
                 onChange={handleBrightnessChange}
-                className="w-32"
+                className="w-24 sm:w-32"
+              />
+            </div>
+            <div className="absolute bottom-2 left-0 right-0 mx-auto w-fit bg-white bg-opacity-80 rounded-md shadow-md p-2 flex items-center z-10">
+              <FaSync className="mr-2 text-blue-500" />
+              <input
+                type="range"
+                min="-45"
+                max="45"
+                value={rotation}
+                onChange={handleRotationChange}
+                className="w-24 sm:w-32"
               />
             </div>
           </div>
-          <button
-            onClick={handleDownload}
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-          >
-            Download Cropped Image ({quality}x)
-          </button>
+          <div className="flex justify-start">
+            <button
+              onClick={handleDownload}
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+            >
+              Download Cropped Image ({quality}x)
+            </button>
+          </div>
         </div>
       )}
     </div>
